@@ -53,3 +53,12 @@ ipv4_dns_suffix: "example.com"
 ipv4_dns_server1: "8.8.8.8"
 ipv4_dns_server2: "1.1.1.1"
 
+
+
+🏃‍♂️ How to Run the Playbook
+Make sure you have Ansible installed (ansible-playbook --version).
+
+Set the required variables in the routed.yml file or use --extra-vars.
+
+Run the playbook:
+
