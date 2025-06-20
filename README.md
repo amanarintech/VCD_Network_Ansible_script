@@ -22,133 +22,91 @@ Supported network types:
 
 ---
 
-## 🚀 Routed Network – `routed.yml`
+🧾 Playbook Overview: routed.yml
+This playbook creates a NAT-Routed Org VDC Network in VMware Cloud Director, optionally with dual-stack (IPv4 + IPv6) support, using the vCD REST APIs. It includes:
 
-Creates a **NAT-routed VDC network** with support for **dual-stack (IPv4 + IPv6)**.
-
-### 🔧 Required Variables
-
-```yaml
-# API & Auth
-vcd_api_host_name: ""
-vcd_api_version: "36.3"
-vcd_api_token: ""
-vcd_organization_name: ""
-vcd_organization_vdc_name: ""
-edge_connection_name: ""
-
-# Network Config
-network_name: ""
-network_description: ""
-enable_dual_subnet_network: true
-
-# IPv4 Config
-Gateway_CIDR_IPv4: "192.168.100.1"
-ipv4_prefix_length: 24
-ipv4_ip_ranges_string: "192.168.100.10-192.168.100.20"
-
-# IPv6 Config
-Gateway_CIDR_IPv6: "fd00:192:168:1::1"
-ipv6_prefix_length: 64
-ipv6_ip_ranges_string: "fd00:192:168:1::10-fd00:192:168:1::20"
-
-# DNS
-ipv4_dns_suffix: "example.com"
-ipv4_dns_server1: "8.8.8.8"
-ipv4_dns_server2: "1.1.1.1"
-
-
-🔒 Isolated Network – isolated.yml
-Creates a fully isolated network without edge connectivity. Ideal for internal-only VM communication.
-
-🔧 Required Variables
-vcd_api_host_name: ""
-vcd_api_version: "36.3"
-vcd_api_token: ""
-vcd_organization_name: ""
-vcd_organization_id: ""
-vcd_organization_vdc_name: ""
-vcd_organization_vdc_id: ""
-
-network_name: ""
-network_description: ""
-enable_dual_subnet_network: false
-
-# IPv4 Config
-Gateway_CIDR_IPv4: "172.20.30.1"
-ipv4_prefix_length: 24
-ipv4_ip_ranges_string: "172.20.30.10-172.20.30.20"
-
-# IPv6 Config
-Gateway_CIDR_IPv6: "fd00:172:20:30::1"
-ipv6_prefix_length: 64
-ipv6_ip_ranges_string: "fd00:172:20:30::10-fd00:172:20:30::20"
-
-# DNS
-ipv4_dns_suffix: "example.com"
-ipv4_dns_server1: "8.8.8.8"
-ipv4_dns_server2: "1.1.1.1"
-
-
-🌐 Direct Network – direct.yml
-Creates a Direct VDC Network attached directly to an external network (e.g., DV Port Group) without edge gateway.
-
-🔧 Required Variables
-vcd_api_host_name: ""
-vcd_api_version: "36.3"
-vcd_api_token: ""
-
-vcd_organization_name: ""
-vcd_organization_vdc_name: ""
-
-external_network: ""     # External network name (e.g., DVPG)
-network_name: ""
-network_description: ""
-shared_network: "true"   # "true" or "false" (string)
+- Authentication
+- Organization & VDC lookup
+- Edge Gateway discovery
+- Subnet and IP range processing
+- Payload construction
+- Network creation and task monitoring
 
 
 
-🔁 Imported Network – imported.yml
-Creates an Imported VDC Network from an existing DV Port Group or NSX-T Segment. Supports dual-stack.
+Header and Variable Definitions
 
-🔧 Required Variables
-vcd_api_host_name: ""
-vcd_api_version: "36.3"
-vcd_api_token: ""
-
-vcd_organization_name: ""
-vcd_organization_vdc_name: ""
-vim_server_id: ""
-
-network_name: ""
-network_description: ""
-shared_network: "false"
-enable_dual_subnet_network: "true"
-
-# IPv4 Config
-Gateway_CIDR_IPv4: "192.168.150.1"
-ipv4_prefix_length: 24
-ipv4_ip_ranges_string: "192.168.150.10-192.168.150.20"
-ipv4_dns_suffix: ""
-ipv4_dns_server1: ""
-ipv4_dns_server2: ""
-
-# IPv6 Config
-Gateway_CIDR_IPv6: "fd00:192:168:1::1"
-ipv6_prefix_length: 64
-ipv6_ip_ranges_string: "fd00:192:168:1::10-fd00:192:168:1::20"
+- name: Create Routed VDC Network on VMware Cloud Director
+  hosts: localhost
+  gather_facts: false
 
 
+- Playbook Name: Describes its purpose.
+- hosts: localhost: Runs locally, not on remote machines.
+  - gather_facts: false: Skips collecting system info; not needed here.
 
 
+🧾 vars Breakdown — Explained by Category
+These are the input variables the playbook relies on. Make sure they are defined correctly before execution.
 
-🔄 Org VDC Network Update – updation_playbook/README.md
-Playbooks to update existing VDC networks in vCD:
+🔐 API & Authentication
+
+| Variable            | Description                                                                 |
+| ------------------- | --------------------------------------------------------------------------- |
+| `vcd_api_host_name` | The base URL of your vCloud Director instance (e.g., `vcloud.example.com`). |
+| `vcd_api_version`   | vCD API version to use. For example: `"36.3"`.                              |
+| `vcd_api_token`     | Your refresh token used to obtain an access token (OAuth).                  |
 
 
-| File                 | Description                          |
-| -------------------- | ------------------------------------ |
-| `Dns.yml`            | Updates DNS suffix and nameservers   |
-| `ipv4static-ip.yml`  | Adds or modifies IPv4 static IP pool |
-| `ipv6static-ip.yml`  | Adds or modifies IPv6 static IP pool |
-| `edgeconnection.yml` | Fetches Edge Gateway connection IDs  |
+🏢 Organization & VDC Context
+
+| Variable                    | Description                                                           |
+| --------------------------- | --------------------------------------------------------------------- |
+| `vcd_organization_name`     | The name of the organization where the network will be created.       |
+| `vcd_organization_vdc_name` | The name of the Org VDC (Virtual Data Center) under the organization. |
+
+
+🌐 Network Configuration
+
+| Variable                     | Description                                                                    |
+| ---------------------------- | ------------------------------------------------------------------------------ |
+| `network_name`               | The desired name of the new routed network.                                    |
+| `network_description`        | A human-readable description of the network.                                   |
+| `enable_dual_subnet_network` | Boolean (`true` or `false`): Enable IPv4+IPv6 if `true`; only IPv4 if `false`. |
+| `guest_vlan_allowed`         | Boolean: Allows guest VLAN tagging if `true`.                                  |
+
+
+📶 IPv4 Configuration
+
+| Variable                | Description                                                                                               |
+| ----------------------- | --------------------------------------------------------------------------------------------------------- |
+| `Gateway_CIDR_IPv4`     | IPv4 Gateway address (e.g., `192.168.100.1`).                                                             |
+| `ipv4_prefix_length`    | Subnet prefix length, typically 24 for `/24`.                                                             |
+| `ipv4_ip_ranges_string` | Comma-separated IPv4 address ranges. Ex: `"192.168.100.10-192.168.100.20,192.168.100.30-192.168.100.40"`. |
+
+
+🌐 IPv6 Configuration (Optional)
+
+| Variable                | Description                                                                         |
+| ----------------------- | ----------------------------------------------------------------------------------- |
+| `Gateway_CIDR_IPv6`     | IPv6 Gateway address (e.g., `fd00:192:168:1::1`).                                   |
+| `ipv6_prefix_length`    | IPv6 subnet size, usually `64`.                                                     |
+| `ipv6_ip_ranges_string` | Comma-separated IPv6 address ranges. Ex: `"fd00:192:168:1::10-fd00:192:168:1::20"`. |
+
+
+🌍 DNS Configuration
+
+| Variable           | Description                                   |
+| ------------------ | --------------------------------------------- |
+| `ipv4_dns_suffix`  | Domain suffix for DNS, e.g., `"example.com"`. |
+| `ipv4_dns_server1` | Primary DNS server (IPv4).                    |
+| `ipv4_dns_server2` | Secondary DNS server (IPv4).                  |
+
+
+🔌 Edge Gateway
+
+| Variable               | Description                                                      |
+| ---------------------- | ---------------------------------------------------------------- |
+| `edge_connection_name` | The name of the Edge Gateway to which this network will connect. |
+
+
