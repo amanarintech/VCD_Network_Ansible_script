@@ -4,7 +4,7 @@ This repository contains a collection of **Ansible playbooks** for automating th
 
 Supported network types:
 
-- 🛣️ Routed Networks (IPv4 / Dual-Stack)
+- 🛣️ Routed Networks (IPv4 / Dual-Stack) 
 - 🌐 Imported Networks (DV Port Group / NSX-T Segment)
 - 🔗 Direct Networks
 - 🔒 Isolated Networks
