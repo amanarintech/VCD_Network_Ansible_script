@@ -1,0 +1,140 @@
+- name: Update DNS settings of Org VDC Routed Network in VCD
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    vcd_api_version: ""
+    vcd_api_host_name: ""
+    vcd_api_token: ""
+    
+    # User Inputs
+    vcd_organization_name: ""
+    network_name: ""
+
+    # New DNS settings
+    ipv4_dns_suffix: "example.com"    
+    ipv4_dns_server1: "8.8.8.8"
+    ipv4_dns_server2: "1.1.1.1"
+
+  tasks:
+    - name: Get vCloud access token (OAuth)
+      uri:
+        url: "https://{{ vcd_api_host_name }}/oauth/provider/token"
+        method: POST
+        headers:
+          Accept: "application/json;version={{ vcd_api_version }}"
+          Content-Type: application/x-www-form-urlencoded
+        body:
+          refresh_token: "{{ vcd_api_token }}"
+          grant_type: refresh_token
+        body_format: form-urlencoded
+        return_content: yes
+        validate_certs: false
+      register: vcloud_token_response
+      no_log: true
+
+    - name: Set access token
+      set_fact:
+        vcloud_access_token: "{{ vcloud_token_response.json.access_token }}"
+      no_log: true
+
+    - name: Get list of organizations
+      uri:
+        url: "https://{{ vcd_api_host_name }}/cloudapi/1.0.0/orgs"
+        method: GET
+        headers:
+          Accept: "application/json;version={{ vcd_api_version }}"
+          Authorization: "Bearer {{ vcloud_access_token }}"
+        return_content: yes
+        validate_certs: false
+      register: org_list_response
+
+    - name: Find organization by name
+      set_fact:
+        org_matches: "{{ org_list_response.json['values'] | selectattr('name', 'equalto', vcd_organization_name) | list }}"
+
+    - name: Fail if organization not found
+      fail:
+        msg: "Organization '{{ vcd_organization_name }}' not found"
+      when: org_matches | length == 0
+
+    - name: Set vcd_organization_id
+      set_fact:
+        vcd_organization_id: "{{ org_matches[0].id }}"
+
+    - name: Get list of Org VDC networks
+      uri:
+        url: "https://{{ vcd_api_host_name }}/cloudapi/1.0.0/orgVdcNetworks"
+        method: GET
+        headers:
+          Accept: "application/json;version={{ vcd_api_version }}"
+          X-VMWARE-VCLOUD-TENANT-CONTEXT: "{{ vcd_organization_id }}"
+          Authorization: "Bearer {{ vcloud_access_token }}"
+        return_content: yes
+        validate_certs: false
+      register: network_list_response
+
+    - name: Find networks matching the network_name
+      set_fact:
+        network_matches: "{{ network_list_response.json['values'] | selectattr('name', 'equalto', network_name) | list }}"
+
+    - name: Fail if network not found
+      fail:
+        msg: "Network '{{ network_name }}' not found in the orgVDCNetworks list"
+      when: network_matches | length == 0
+
+    - name: Set network_id from first matched network
+      set_fact:
+        network_id: "{{ network_matches[0].id }}"
+
+    - name: Get existing Org VDC Network
+      uri:
+        url: "https://{{ vcd_api_host_name }}/cloudapi/1.0.0/orgVdcNetworks/{{ network_id }}"
+        method: GET
+        headers:
+          Accept: "application/json;version={{ vcd_api_version }}"
+          X-VMWARE-VCLOUD-TENANT-CONTEXT: "{{ vcd_organization_id }}"
+          Authorization: "Bearer {{ vcloud_access_token }}"
+        return_content: yes
+        validate_certs: false
+      register: current_network
+
+    - name: Set updated subnet list with new DNS values
+      set_fact:
+        updated_subnets: >-
+          {{
+            current_network.json.subnets['values'] | map('combine', {
+              'dnsServer1': ipv4_dns_server1,
+              'dnsServer2': ipv4_dns_server2,
+              'dnsSuffix': ipv4_dns_suffix
+            }) | list
+          }}
+
+    - name: Rebuild full network definition with updated subnets
+      set_fact:
+        updated_payload: >-
+          {{
+            current_network.json | combine({
+              'subnets': {
+                'values': updated_subnets
+              }
+            })
+          }}
+
+    - name: Debug Network payload (optional)
+      debug:
+        var: updated_payload
+
+    - name: Apply DNS update to Org VDC Network
+      uri:
+        url: "https://{{ vcd_api_host_name }}/cloudapi/1.0.0/orgVdcNetworks/{{ network_id }}"
+        method: PUT
+        headers:
+          Accept: "application/json;version={{ vcd_api_version }}"
+          X-VMWARE-VCLOUD-TENANT-CONTEXT: "{{ vcd_organization_id }}"
+          Content-Type: "application/json"
+          Authorization: "Bearer {{ vcloud_access_token }}"
+        body: "{{ updated_payload }}"
+        body_format: json
+        status_code: [200, 202]
+        validate_certs: false

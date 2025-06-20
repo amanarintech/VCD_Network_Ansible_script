@@ -1,0 +1,377 @@
+- name: Manage IPv6 Static Pools in Org VDC Network
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    vcd_api_version: ""
+    vcd_api_host_name: ""
+    vcd_api_token: ""
+
+    ## user input ##
+    vcd_organization_name: ""
+    network_name: ""
+
+    # Operation mode: 'add', 'modify', or 'remove'
+    operation_mode: "add"
+
+    ipv6_ip_ranges_string: ""  # for addition
+
+    target_range: ""  # add value to remove or modify
+    new_range: ""  # add value to modify
+
+  tasks:
+
+    - name: Validate operation mode
+      fail:
+        msg: "Invalid operation_mode. Must be 'add', 'modify', or 'remove'."
+      when: operation_mode not in ['add', 'modify', 'remove']
+
+    - name: Validate inputs based on operation mode
+      block:
+        - name: Validate add mode inputs
+          fail:
+            msg: "For 'add' mode, ipv6_ip_ranges_string cannot be empty."
+          when:
+            - operation_mode == 'add'
+            - ipv6_ip_ranges_string | trim == ""
+
+        - name: Validate modify mode inputs
+          fail:
+            msg: "For 'modify' mode, both target_range and new_range cannot be empty."
+          when:
+            - operation_mode == 'modify'
+            - (target_range | trim == "") or (new_range | trim == "")
+
+        - name: Validate remove mode inputs
+          fail:
+            msg: "For 'remove' mode, target_range cannot be empty."
+          when:
+            - operation_mode == 'remove'
+            - target_range | trim == ""
+
+    - name: Split start and end IP
+      set_fact:
+        ipv6_parts: "{{ target_range.split('-') }}"
+      when: operation_mode in ['modify', 'remove']
+    
+    - name: Split start and end IP
+      set_fact:
+        start_ip_raw: "{{ ipv6_parts[0] }}"
+        end_ip_raw: "{{ ipv6_parts[1] }}"
+      when: operation_mode in ['modify', 'remove']
+
+    - name: Expand start_ip_raw
+      set_fact:
+        start_ip_expanded: >-
+          {%- set parts = start_ip_raw.split(':') -%}
+          {%- if '' in parts -%}
+            {%- set empty_index = parts.index('') -%}
+            {%- set missing = 8 - (parts|length - 1) -%}
+            {%- set left = parts[:empty_index] -%}
+            {%- set zeros = ['0'] * missing -%}
+            {%- set right = parts[empty_index + 1:] -%}
+            {{ (left + zeros + right) | join(':') }}
+          {%- else -%}
+            {{ start_ip_raw }}
+          {%- endif -%}
+      when: operation_mode in ['modify', 'remove']
+
+    - name: Expand end_ip_raw
+      set_fact:
+        end_ip_expanded: >-
+          {%- set parts = end_ip_raw.split(':') -%}
+          {%- if '' in parts -%}
+            {%- set empty_index = parts.index('') -%}
+            {%- set missing = 8 - (parts|length - 1) -%}
+            {%- set left = parts[:empty_index] -%}
+            {%- set zeros = ['0'] * missing -%}
+            {%- set right = parts[empty_index + 1:] -%}
+            {{ (left + zeros + right) | join(':') }}
+          {%- else -%}
+            {{ end_ip_raw }}
+          {%- endif -%}
+      when: operation_mode in ['modify', 'remove']
+
+    - name: Combine expanded IPv6 addresses into modified_target_range
+      set_fact:
+        modified_target_range: "{{ start_ip_expanded }}-{{ end_ip_expanded }}"
+      when: operation_mode in ['modify', 'remove']
+
+    - name: Show final expanded modified_target_range
+      debug:
+        msg: "{{ modified_target_range }}"
+      when: operation_mode in ['modify', 'remove']
+
+    - name: Prepare IP ranges for add operation
+      block:
+        - name: Split user IPv6 ranges string into list
+          set_fact:
+            ipv6_ranges_list: "{{ ipv6_ip_ranges_string.split(',') | map('trim') | list }}"
+
+        - name: Build list of dicts for new static pools
+          set_fact:
+            new_ipv6_static_pools: >-
+              {{
+                ipv6_ranges_list
+                | select('match', '^[a-fA-F0-9:]+-[a-fA-F0-9:]+$')
+                | map('regex_replace', '^(.*)-(.*)$', '{"startAddress": "\1", "endAddress": "\2"}')
+                | map('from_json')
+                | list
+              }}
+      when: operation_mode == 'add'
+
+    - name: Prepare IP ranges for modify operation
+      block:
+        - name: Convert target range to dict
+          set_fact:
+            modified_target_range_dict: "{{ {'startAddress': modified_target_range.split('-')[0], 'endAddress': modified_target_range.split('-')[1]} }}"
+
+        - name: Convert new range to dict
+          set_fact:
+            new_range_dict: "{{ {'startAddress': new_range.split('-')[0], 'endAddress': new_range.split('-')[1]} }}"
+      when: operation_mode == 'modify'
+
+    - name: Prepare IP ranges for remove operation
+      block:
+        - name: Convert target range to dict
+          set_fact:
+            modified_target_range_dict: "{{ {'startAddress': modified_target_range.split('-')[0], 'endAddress': modified_target_range.split('-')[1]} }}"
+      when: operation_mode == 'remove'
+
+    - name: Get vCloud access token (OAuth)
+      uri:
+        url: "https://{{ vcd_api_host_name }}/oauth/provider/token"
+        method: POST
+        headers:
+          Accept: "application/json;version={{ vcd_api_version }}"
+          Content-Type: application/x-www-form-urlencoded
+        body:
+          refresh_token: "{{ vcd_api_token }}"
+          grant_type: refresh_token
+        body_format: form-urlencoded
+        return_content: yes
+        validate_certs: false
+      register: vcloud_token_response
+
+    - name: Set access token
+      set_fact:
+        vcloud_access_token: "{{ vcloud_token_response.json.access_token }}"
+
+    - name: Get list of organizations
+      uri:
+        url: "https://{{ vcd_api_host_name }}/cloudapi/1.0.0/orgs"
+        method: GET
+        headers:
+          Accept: "application/json;version={{ vcd_api_version }}"
+          Authorization: "Bearer {{ vcloud_access_token }}"
+        return_content: yes
+        validate_certs: false
+      register: org_list_response
+
+    - name: Find organization by name
+      set_fact:
+        org_matches: "{{ org_list_response.json['values'] | selectattr('name', 'equalto', vcd_organization_name) | list }}"
+
+    - name: Fail if organization not found
+      fail:
+        msg: "Organization '{{ vcd_organization_name }}' not found"
+      when: org_matches | length == 0
+
+    - name: Set organization ID
+      set_fact:
+        vcd_organization_id: "{{ org_matches[0].id }}"
+
+    - name: Get list of Org VDC networks
+      uri:
+        url: "https://{{ vcd_api_host_name }}/cloudapi/1.0.0/orgVdcNetworks"
+        method: GET
+        headers:
+          Accept: "application/json;version={{ vcd_api_version }}"
+          X-VMWARE-VCLOUD-TENANT-CONTEXT: "{{ vcd_organization_id }}"
+          Authorization: "Bearer {{ vcloud_access_token }}"
+        return_content: yes
+        validate_certs: false
+      register: network_list_response
+
+    - name: Find network by name
+      set_fact:
+        network_matches: "{{ network_list_response.json['values'] | selectattr('name', 'equalto', network_name) | list }}"
+
+    - name: Fail if network not found
+      fail:
+        msg: "Network '{{ network_name }}' not found."
+      when: network_matches | length == 0
+
+    - name: Set network ID
+      set_fact:
+        network_id: "{{ network_matches[0].id }}"
+
+    - name: Get existing Org VDC Network details
+      uri:
+        url: "https://{{ vcd_api_host_name }}/cloudapi/1.0.0/orgVdcNetworks/{{ network_id }}"
+        method: GET
+        headers:
+          Accept: "application/json;version={{ vcd_api_version }}"
+          X-VMWARE-VCLOUD-TENANT-CONTEXT: "{{ vcd_organization_id }}"
+          Authorization: "Bearer {{ vcloud_access_token }}"
+        return_content: yes
+        validate_certs: false
+      register: current_network
+
+    - name: Find IPv6 subnets list
+      set_fact:
+        ipv6_subnets_list: >-
+          {{
+            current_network.json['subnets']['values']
+            | rejectattr('gateway', 'search', '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
+            | list
+          }}
+
+    - name: Fail if no IPv6 subnet found
+      fail:
+        msg: "No IPv6 subnet found in the Org VDC Network."
+      when: ipv6_subnets_list | length == 0
+
+    - name: Extract first IPv6 subnet
+      set_fact:
+        ipv6_subnet: "{{ ipv6_subnets_list[0] }}"
+
+    - name:
+      debug:
+        var: ipv6_subnet
+
+    - name: Extract IPv4 subnets (all IPv4 subnets)
+      set_fact:
+        ipv4_subnets: >-
+          {{
+            current_network.json.subnets['values']
+            | selectattr('gateway', 'search', '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
+            | list
+          }}
+
+    - name: Extract existing IPv6 static pools list
+      set_fact:
+        existing_ipv6_ranges: "{{ (ipv6_subnet.ipRanges['values'] | default([])) if (ipv6_subnet is defined and ipv6_subnet.ipRanges is defined and ipv6_subnet.ipRanges['values'] is defined) else [] }}"
+
+    - name: Ensure existing_ipv6_ranges is always a list
+      set_fact:
+        existing_ipv6_ranges: "{{ existing_ipv6_ranges if existing_ipv6_ranges is iterable and (existing_ipv6_ranges is not string and existing_ipv6_ranges is not mapping) else [] }}"
+
+    - name: Process add operation
+      block:
+        - name: Ensure new_ipv6_static_pools is always a list
+          set_fact:
+            new_ipv6_static_pools: "{{ new_ipv6_static_pools if new_ipv6_static_pools is iterable and (new_ipv6_static_pools is not string and new_ipv6_static_pools is not mapping) else [] }}"
+
+        - name: Filter only new IPv6 ranges (no duplicates)
+          set_fact:
+            ipv6_static_pools_to_add: >-
+              {{
+                new_ipv6_static_pools
+                | default([])
+                | reject('in', existing_ipv6_ranges)
+                | list
+              }}
+
+        - name: Build updated IPv6 ipRanges list
+          set_fact:
+            updated_ipv6_ipRanges: "{{ (existing_ipv6_ranges | default([])) + (ipv6_static_pools_to_add | default([])) }}"
+      when: operation_mode == 'add'
+
+    - name:
+      debug:
+        var: updated_ipv6_ipRanges
+
+    - name: Process modify operation
+      block:
+        - name: Verify target range exists
+          fail:
+            msg: "Target range {{ modified_target_range }} not found in existing ranges"
+          when: modified_target_range_dict not in existing_ipv6_ranges
+
+        - name: Remove target range and add new range
+          set_fact:
+            updated_ipv6_ipRanges: >-
+              {{
+                (existing_ipv6_ranges | rejectattr('startAddress', 'equalto', modified_target_range_dict.startAddress)) + [new_range_dict]
+              }}
+      when: operation_mode == 'modify'
+
+    - name: Process remove operation
+      block:
+        - name: Verify target range exists
+          fail:
+            msg: "Target range {{ modified_target_range }} not found in existing ranges"
+          when: modified_target_range_dict not in existing_ipv6_ranges
+
+        - name: Remove target range from IP ranges
+          set_fact:
+            updated_ipv6_ipRanges: >-
+              {{
+                existing_ipv6_ranges | rejectattr('startAddress', 'equalto', modified_target_range_dict.startAddress)
+              }}
+      when: operation_mode == 'remove'
+
+    - name:
+      debug:
+        var: updated_ipv6_ipRanges
+
+    - name: Build updated IPv6 subnet with new/modified ipRanges
+      set_fact:
+        updated_ipv6_subnet: >-
+          {{
+            (ipv6_subnet | default({}))
+            | combine({
+              'ipRanges': {'values': updated_ipv6_ipRanges},
+              'totalIpCount': updated_ipv6_ipRanges | length,
+              'usedIpCount': 0
+            }, recursive=True)
+          }}
+      when: operation_mode in ['add', 'modify', 'remove']
+
+    - name: Build final updated subnets list (IPv6 updated + all existing IPv4)
+      set_fact:
+        updated_subnets_list: "{{ [updated_ipv6_subnet] + (ipv4_subnets | default([])) }}"
+      when: operation_mode in ['add', 'modify', 'remove']
+
+
+
+    - name: Build updated network payload
+      set_fact:
+        updated_payload: "{{ current_network.json | combine({'subnets': {'values': updated_subnets_list}}, recursive=True) }}"
+      when: operation_mode in ['add', 'modify', 'remove']
+
+    - name: Debug payload
+      debug:
+        var: updated_payload
+      when: operation_mode in ['add', 'modify', 'remove']
+
+    - name: Update Org VDC Network
+      uri:
+        url: "https://{{ vcd_api_host_name }}/cloudapi/1.0.0/orgVdcNetworks/{{ network_id }}"
+        method: PUT
+        headers:
+          Accept: "application/json;version={{ vcd_api_version }}"
+          X-VMWARE-VCLOUD-TENANT-CONTEXT: "{{ vcd_organization_id }}"
+          Content-Type: "application/json"
+          Authorization: "Bearer {{ vcloud_access_token }}"
+        body: "{{ updated_payload }}"
+        body_format: json
+        status_code: [200, 202]
+        validate_certs: false
+      when: operation_mode in ['add', 'modify', 'remove']
+
+    - name: Display success message for add operation
+      debug:
+        msg: "Successfully added IPv6 ranges: {{ ipv6_ip_ranges_string }}"
+      when: operation_mode == 'add'
+
+    - name: Display success message for modify operation
+      debug:
+        msg: "Successfully modified IPv6 range from {{ modified_target_range }} to {{ new_range }}"
+      when: operation_mode == 'modify'
+
+    - name: Display success message for remove operation
+      debug:
+        msg: "Successfully removed IPv6 range: {{ modified_target_range }}"
+      when: operation_mode == 'remove'

@@ -1,0 +1,286 @@
+- name: Create Routed VDC Network on VMware Cloud Director
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    vcd_organization_vdc_name: ""
+    vcd_organization_name: ""
+    vcd_api_version: ""
+    vcd_api_host_name: ""
+    vcd_api_token: ""
+
+    edge_connection_name: ""
+    
+    network_name: ""
+    network_description: ""
+    enable_dual_subnet_network: true
+    guest_vlan_allowed: true
+
+    # IPv4 settings
+    Gateway_CIDR_IPv4: "192.168.100.1"
+    ipv4_prefix_length: 24
+    ipv4_ip_ranges_string: "192.168.100.10-192.168.100.20,192.168.100.30-192.168.100.40"
+
+    # IPv6 settings
+    Gateway_CIDR_IPv6: "fd00:192:168:1::1"
+    ipv6_prefix_length: 64
+    ipv6_ip_ranges_string: "fd00:192:168:1::10-fd00:192:168:1::20,fd00:192:168:1::30-fd00:192:168:1::40"
+
+    ipv4_dns_suffix: "exaple.com"
+    ipv4_dns_server1: "8.8.8.8"
+    ipv4_dns_server2: "1.1.1.1"
+
+  tasks:
+    - name: Get vCloud access token (OAuth)
+      uri:
+        url: https://{{ vcd_api_host_name }}/oauth/provider/token
+        method: POST
+        headers:
+          Accept: application/json;version={{ vcd_api_version }}
+          Content-Type: application/x-www-form-urlencoded
+        body:
+          refresh_token: '{{ vcd_api_token }}'
+          grant_type: refresh_token
+        body_format: form-urlencoded
+        return_content: yes
+      register: vcloud_token_response
+
+    - name: Set access token
+      set_fact:
+        vcloud_access_token: '{{ vcloud_token_response.json.access_token }}'
+
+    - name: Get Organization ID by name
+      uri:
+        url: https://{{ vcd_api_host_name }}/cloudapi/1.0.0/orgs
+        method: GET
+        headers:
+          Accept: application/json;version={{ vcd_api_version }}
+          Authorization: Bearer {{ vcloud_access_token }}
+        return_content: yes
+      register: orgs_response
+      until: orgs_response.status == 200
+      retries: 3
+      delay: 5
+
+    - name: Debug Organizations Response
+      debug:
+        var: orgs_response.json
+
+    - name: Extract Organization ID
+      set_fact:
+        vcd_organization_id: "{{ item.id }}"
+      loop: "{{ orgs_response.json['values'] }}"
+      when: item.name == vcd_organization_name
+      loop_control:
+        label: "{{ item.name }}"
+      failed_when: not vcd_organization_id is defined or vcd_organization_id == ''
+
+    - name: Validate Organization ID
+      fail:
+        msg: "Organization '{{ vcd_organization_name }}' not found"
+      when: vcd_organization_id is not defined or vcd_organization_id == ''
+
+    - name: Get VDC ID by name
+      uri:
+        url: https://{{ vcd_api_host_name }}/cloudapi/1.0.0/vdcs
+        method: GET
+        headers:
+          Accept: application/json;version={{ vcd_api_version }}
+          Authorization: Bearer {{ vcloud_access_token }}
+          X-VMWARE-VCLOUD-TENANT-CONTEXT: "{{ vcd_organization_id }}"
+        return_content: yes
+      register: vdcs_response
+
+    - name: Debug VDCs Response
+      debug:
+        var: vdcs_response.json
+
+    - name: Extract VDC ID
+      set_fact:
+        vcd_organization_vdc_id: "{{ item.id }}"
+      loop: "{{ vdcs_response.json['values'] }}"
+      when: item.name == vcd_organization_vdc_name
+      loop_control:
+        label: "{{ item.name }}"
+      failed_when: not vcd_organization_vdc_id is defined or vcd_organization_vdc_id == ''
+
+    - name: Validate VDC ID
+      fail:
+        msg: "VDC '{{ vcd_organization_vdc_name }}' not found in organization"
+      when: vcd_organization_vdc_id is not defined or vcd_organization_vdc_id == ''
+
+    - name: Get Edge Gateways
+      uri:
+        url: https://{{ vcd_api_host_name }}/cloudapi/1.0.0/edgeGateways
+        method: GET
+        headers:
+          Accept: application/json;version={{ vcd_api_version }}
+          Authorization: Bearer {{ vcloud_access_token }}
+          X-VMWARE-VCLOUD-TENANT-CONTEXT: "{{ vcd_organization_id }}"
+        return_content: yes
+      register: edge_response
+      until: edge_response.status == 200
+      retries: 3
+      delay: 5
+
+    - name: Debug Edge Gateways Response
+      debug:
+        var: edge_response.json
+
+    - name: Find edge gateway by name
+      set_fact:
+        edge_gateway_matches: "{{ edge_response.json['values'] | selectattr('name', 'equalto', edge_connection_name) | list }}"
+
+    - name: Debug Edge Gateway Matches
+      debug:
+        var: edge_gateway_matches
+
+    - name: Fail if edge gateway not found
+      fail:
+        msg: "Edge gateway '{{ edge_connection_name }}' not found"
+      when: edge_gateway_matches | length == 0
+
+    - name: Set edge_connection_id
+      set_fact:
+        edge_connection_id: "{{ edge_gateway_matches[0].id }}"
+
+    - name: Validate Edge Connection ID
+      fail:
+        msg: "Edge connection ID not found"
+      when: edge_connection_id is not defined or edge_connection_id == ''
+
+    - name: Parse IPv4 IP ranges from string
+      set_fact:
+        ipv4_ip_ranges: "{{ [] if ipv4_ip_ranges_string | trim == '' else ipv4_ip_ranges_string.split(',') | map('regex_replace', '^(.*)-(.*)$', '{\"startAddress\": \"\\1\", \"endAddress\": \"\\2\"}') | map('from_json') | list }}"
+
+    - name: Parse IPv6 IP ranges from string
+      set_fact:
+        ipv6_ip_ranges: "{{ [] if ipv6_ip_ranges_string | trim == '' else ipv6_ip_ranges_string.split(',') | map('regex_replace', '^(.*)-(.*)$', '{\"startAddress\": \"\\1\", \"endAddress\": \"\\2\"}') | map('from_json') | list }}"
+
+    - name: Debug IPv4 Ranges
+      debug:
+        var: ipv4_ip_ranges
+
+    - name: Debug IPv6 Ranges
+      debug:
+        var: ipv6_ip_ranges
+
+    - name: Build IPv4 subnet
+      set_fact:
+        ipv4_subnet: >-
+          {{
+            {
+              "gateway": Gateway_CIDR_IPv4,
+              "prefixLength": ipv4_prefix_length,
+              "dnsSuffix": ipv4_dns_suffix,
+              "dnsServer1": ipv4_dns_server1,
+              "dnsServer2": ipv4_dns_server2,
+              "enabled": true
+            }
+            | combine({"ipRanges": {"values": ipv4_ip_ranges}} 
+                if ipv4_ip_ranges 
+                and ipv4_ip_ranges[0].startAddress|length > 0 
+                and ipv4_ip_ranges[0].endAddress|length > 0 
+                else {})
+          }}
+
+    - name: Build IPv6 subnet
+      set_fact:
+        ipv6_subnet: >-
+          {{
+            {
+              "gateway": Gateway_CIDR_IPv6,
+              "prefixLength": ipv6_prefix_length,
+              "enabled": true
+            }
+            | combine({"ipRanges": {"values": ipv6_ip_ranges}} 
+                if ipv6_ip_ranges 
+                and ipv6_ip_ranges[0].startAddress|length > 0 
+                and ipv6_ip_ranges[0].endAddress|length > 0 
+                else {})
+          }}
+
+    - name: Set initial subnet_values with IPv4
+      set_fact:
+        subnet_values:
+          - "{{ ipv4_subnet }}"
+
+    - name: Add IPv6 subnet if dual stack enabled
+      set_fact:
+        subnet_values: "{{ subnet_values + [ipv6_subnet] }}"
+      when: enable_dual_subnet_network
+
+    - name: Debug Subnet Values
+      debug:
+        var: subnet_values
+
+    - name: Build network payload
+      set_fact:
+        payload:
+          name: "{{ network_name }}"
+          description: "{{ network_description }}"
+          subnets:
+            values: "{{ subnet_values }}"
+          backingNetworkType: NSXT_FLEXIBLE_SEGMENT
+          networkType: NAT_ROUTED
+          ownerRef:
+            name: "{{ vcd_organization_vdc_name }}"
+            id: "{{ vcd_organization_vdc_id }}"
+          orgVdcIsNsxTBacked: true
+          orgRef:
+            name: "{{ vcd_organization_name }}"
+            id: "{{ vcd_organization_id }}"
+          connection:
+            routerRef:
+              name: "{{ edge_connection_name }}"
+              id: "{{ edge_connection_id }}"
+            connectionType: INTERNAL
+            connectionTypeValue: INTERNAL
+            connected: true
+          shared: false
+          enableDualSubnetNetwork: "{{ enable_dual_subnet_network }}"
+          guestVlanTaggingAllowed: "{{ guest_vlan_allowed }}"
+
+    - name: Debug Network Payload
+      debug:
+        var: payload
+
+    - name: Create VDC Network
+      uri:
+        url: https://{{ vcd_api_host_name }}/cloudapi/1.0.0/orgVdcNetworks
+        method: POST
+        headers:
+          Accept: application/json;version={{ vcd_api_version }}
+          Authorization: Bearer {{ vcloud_access_token }}
+          X-VMWARE-VCLOUD-TENANT-CONTEXT: "{{ vcd_organization_id }}"
+          Content-Type: application/json
+        body: "{{ payload | to_json }}"
+        body_format: json
+        return_content: yes
+        status_code: 202
+      register: create_network_response
+
+    - name: Debug Network Creation Response
+      debug:
+        var: create_network_response
+
+    - name: Wait for network creation task to complete
+      uri:
+        url: "{{ create_network_response.location }}"
+        method: GET
+        headers:
+          Accept: application/*+xml;version={{ vcd_api_version }}
+          Authorization: Bearer {{ vcloud_access_token }}
+          X-VMWARE-VCLOUD-TENANT-CONTEXT: "{{ vcd_organization_id }}"
+        return_content: yes
+        status_code: 200
+      register: task_status
+      until: task_status.content is search("status=\"success\"")
+      retries: 10
+      delay: 10
+      when: create_network_response.status == 202 and create_network_response.location is defined
+
+    - name: Show final task status
+      debug:
+        var: task_status.content
+      when: create_network_response.status == 202 and create_network_response.location is defined

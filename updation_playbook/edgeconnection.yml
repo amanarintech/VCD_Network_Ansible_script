@@ -1,0 +1,183 @@
+- name: Script to Update VDC Routed Network to Isolated Network or vice versa by modifying the Edge Connection
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    vcd_api_version: ""
+    vcd_api_host_name: ""
+    vcd_api_token: ""
+
+    # User Inputs
+    vcd_organization_name: ""
+    network_name: ""
+
+    # Control to toggle edge connection
+    connect_to_edge_gateway: false    # Set false to remove edge connection || true for adding/changing edge connection
+    edge_connection_name: ""
+
+  tasks:
+
+    - name: Get vCloud access token (OAuth)
+      uri:
+        url: "https://{{ vcd_api_host_name }}/oauth/provider/token"
+        method: POST
+        headers:
+          Accept: "application/json;version={{ vcd_api_version }}"
+          Content-Type: application/x-www-form-urlencoded
+        body:
+          refresh_token: "{{ vcd_api_token }}"
+          grant_type: refresh_token
+        body_format: form-urlencoded
+        return_content: yes
+        validate_certs: false
+      register: vcloud_token_response
+      no_log: true
+
+    - name: Set access token
+      set_fact:
+        vcloud_access_token: "{{ vcloud_token_response.json.access_token }}"
+      no_log: true
+
+    - name: Get list of organizations
+      uri:
+        url: "https://{{ vcd_api_host_name }}/cloudapi/1.0.0/orgs"
+        method: GET
+        headers:
+          Accept: "application/json;version={{ vcd_api_version }}"
+          Authorization: "Bearer {{ vcloud_access_token }}"
+        return_content: yes
+        validate_certs: false
+      register: org_list_response
+
+    - name: Find organization by name
+      set_fact:
+        org_matches: "{{ org_list_response.json['values'] | selectattr('name', 'equalto', org_name) | list }}"
+
+    - name: Fail if organization not found
+      fail:
+        msg: "Organization '{{ org_name }}' not found"
+      when: org_matches | length == 0
+
+    - name: Set org_id
+      set_fact:
+        org_id: "{{ org_matches[0].id }}"
+
+
+    - name: Get list of Org VDC networks
+      uri:
+        url: "https://{{ vcd_api_host_name }}/cloudapi/1.0.0/orgVdcNetworks"
+        method: GET
+        headers:
+          Accept: "application/json;version={{ vcd_api_version }}"
+          X-VMWARE-VCLOUD-TENANT-CONTEXT: "{{ vcd_organization_id }}"
+          Authorization: "Bearer {{ vcloud_access_token }}"
+        return_content: yes
+        validate_certs: false
+      register: network_list_response
+
+    - name: Find network by name
+      set_fact:
+        network_matches: "{{ network_list_response.json['values'] | selectattr('name', 'equalto', network_name) | list }}"
+
+    - name: Fail if network not found
+      fail:
+        msg: "Network '{{ network_name }}' not found in Org VDC networks"
+      when: network_matches | length == 0
+
+    - name: Set network_id
+      set_fact:
+        network_id: "{{ network_matches[0].id }}"
+
+    - name: Get list of Edge Gateways
+      when: connect_to_edge_gateway
+      uri:
+        url: "https://{{ vcd_api_host_name }}/cloudapi/1.0.0/edgeGateways"
+        method: GET
+        headers:
+          Accept: "application/json;version={{ vcd_api_version }}"
+          X-VMWARE-VCLOUD-TENANT-CONTEXT: "{{ vcd_organization_id }}"
+          Authorization: "Bearer {{ vcloud_access_token }}"
+        return_content: yes
+        validate_certs: false
+      register: edge_gateway_list_response
+
+    - name: Find edge gateway by name
+      when: connect_to_edge_gateway
+      set_fact:
+        edge_gateway_matches: "{{ edge_gateway_list_response.json['values'] | selectattr('name', 'equalto', edge_connection_name) | list }}"
+
+    - name: Fail if edge gateway not found
+      when: connect_to_edge_gateway and edge_gateway_matches | length == 0
+      fail:
+        msg: "Edge gateway '{{ edge_connection_name }}' not found"
+
+    - name: Set edge_connection_id
+      when: connect_to_edge_gateway
+      set_fact:
+        edge_connection_id: "{{ edge_gateway_matches[0].id }}"
+
+    - name: Set connection config if enabled
+      set_fact:
+        connection_config:
+          routerRef:
+            name: "{{ edge_connection_name }}"
+            id: "{{ edge_connection_id }}"
+          connectionType: INTERNAL
+          connectionTypeValue: INTERNAL
+          isUniversalVdcGroupEdge: false
+          connected: true
+      when: connect_to_edge_gateway
+
+    - name: Get existing network payload
+      uri:
+        url: "https://{{ vcd_api_host_name }}/cloudapi/1.0.0/orgVdcNetworks/{{ network_id }}"
+        method: GET
+        headers:
+          Accept: "application/json;version={{ vcd_api_version }}"
+          X-VMWARE-VCLOUD-TENANT-CONTEXT: "{{ vcd_organization_id }}"
+          Authorization: "Bearer {{ vcloud_access_token }}"
+        return_content: yes
+        validate_certs: false
+      register: existing_network_response
+
+    - name: Set base payload from existing network
+      set_fact:
+        network_payload: "{{ existing_network_response.json }}"
+
+    - name: Inject connection config if enabled
+      set_fact:
+        network_payload: "{{ network_payload | combine({'connection': connection_config}, recursive=True) }}"
+      when: connect_to_edge_gateway
+
+    - name: Remove connection config if not enabled
+      set_fact:
+        network_payload: "{{ network_payload | combine({'connection': None}, recursive=True) }}"
+      when: not connect_to_edge_gateway
+
+    - name: Adjust networkType based on connection setting
+      set_fact:
+        network_payload: >-
+          {{
+            network_payload | combine(
+              {'networkType': (connect_to_edge_gateway | bool) | ternary('NAT_ROUTED', 'ISOLATED')},
+              recursive=True
+            )
+          }}
+
+    - name: Debug Network payload (optional)
+      debug:
+        var: network_payload
+
+    - name: Update Org VDC Network
+      uri:
+        url: "https://{{ vcd_api_host_name }}/cloudapi/1.0.0/orgVdcNetworks/{{ network_id }}"
+        method: PUT
+        headers:
+          Accept: "application/json;version={{ vcd_api_version }}"
+          X-VMWARE-VCLOUD-TENANT-CONTEXT: "{{ vcd_organization_id }}"
+          Content-Type: "application/json"
+          Authorization: "Bearer {{ vcloud_access_token }}"
+        body: "{{ network_payload | to_json }}"
+        body_format: json
+        status_code: [200, 202]
+        validate_certs: false

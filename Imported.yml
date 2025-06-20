@@ -1,0 +1,261 @@
+- name: Create Imported VDC Network works for Distributed Virtual Port group with IPv4 only
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    # Required configurations
+    vcd_api_host_name: ""
+    vcd_api_version: ""
+    vcd_api_token: ""
+    vcd_organization_vdc_name: ""
+    vcd_organization_name: ""
+    vim_server_id: ""
+
+    # User inputsc
+    network_name: ""
+    network_description: ""
+    enable_dual_subnet_network: "true"
+    shared_network: "false"
+
+    # IPv4 settings
+    Gateway_CIDR_IPv4: "192.168.150.1"
+    ipv4_prefix_length: 24
+    ipv4_ip_ranges_string: ""
+    ipv4_dns_suffix: ""
+    ipv4_dns_server1: ""
+    ipv4_dns_server2: ""
+
+    # IPv6 settings
+    Gateway_CIDR_IPv6: "fd00:192:168:1::1"
+    ipv6_prefix_length: 64
+    ipv6_ip_ranges_string: "fd00:192:168:1::10-fd00:192:168:1::20"
+
+  tasks:
+    - name: Get vCloud access token (OAuth)
+      uri:
+        url: "https://{{ vcd_api_host_name }}/oauth/provider/token"
+        method: POST
+        headers:
+          Accept: "application/json;version={{ vcd_api_version }}"
+          Content-Type: "application/x-www-form-urlencoded"
+        body:
+          refresh_token: "{{ vcd_api_token }}"
+          grant_type: refresh_token
+        body_format: form-urlencoded
+        return_content: yes
+      register: vcloud_token_response
+      ignore_errors: yes
+
+    - name: Fail if token request fails
+      fail:
+        msg: "Failed to retrieve access token: {{ vcloud_token_response.json }}"
+      when: vcloud_token_response.status != 200
+
+    - name: Set access token
+      set_fact:
+        vcloud_access_token: "{{ vcloud_token_response.json.access_token }}"
+
+    - name: Get organization by name
+      uri:
+        url: "https://{{ vcd_api_host_name }}/cloudapi/1.0.0/orgs"
+        method: GET
+        headers:
+          Accept: "application/json;version={{ vcd_api_version }}"
+          Authorization: "Bearer {{ vcloud_access_token }}"
+        return_content: yes
+      register: orgs_response
+
+    - name: Set vCD organization ID
+      set_fact:
+        vcd_organization_id: >-
+          {{
+            (orgs_response.json["values"]
+             | selectattr('name', 'equalto', vcd_organization_name)
+             | first).id
+          }}
+
+    - name: Get VDCs for the organization
+      uri:
+        url: "https://{{ vcd_api_host_name }}/cloudapi/1.0.0/vdcs"
+        method: GET
+        headers:
+          Accept: "application/json;version={{ vcd_api_version }}"
+          Authorization: "Bearer {{ vcloud_access_token }}"
+          X-VMWARE-VCLOUD-TENANT-CONTEXT: "{{ vcd_organization_id }}"
+        return_content: yes
+      register: vdcs_response
+
+    - name: Set vCD Org VDC ID
+      set_fact:
+        vcd_organization_vdc_id: >-
+          {{
+            (vdcs_response.json["values"]
+             | selectattr('name', 'equalto', vcd_organization_vdc_name)
+             | first).id
+          }}
+
+    - name: Fetch all DVPortGroups from vCenter
+      uri:
+        url: "https://{{ vcd_api_host_name }}/api/admin/extension/vimServer/{{ vim_server_id }}/networks"
+        method: GET
+        headers:
+          Accept: "application/*+json;version={{ vcd_api_version }}"
+          Authorization: "Bearer {{ vcloud_access_token }}"
+        return_content: yes
+      register: dvpg_response
+
+    - name: Extract DVPortGroup moRefs
+      set_fact:
+        all_dvpgs: "{{ dvpg_response.json.vimObjectRefs.vimObjectRef
+                      | selectattr('vimObjectType','equalto','DV_PORTGROUP')
+                      | map(attribute='moRef') | list }}"
+
+    - name: Fetch existing Org VDC networks
+      uri:
+        url: "https://{{ vcd_api_host_name }}/cloudapi/1.0.0/orgVdcNetworks"
+        method: GET
+        headers:
+          Accept: "application/json;version={{ vcd_api_version }}"
+          Authorization: "Bearer {{ vcloud_access_token }}"
+        return_content: yes
+      register: existing_nets
+
+    - name: Extract used DVPortGroup moRefs
+      set_fact:
+        used_dvportgroups: >-
+          {{
+            existing_nets.json['values']
+            | selectattr('backingNetworkType', 'equalto', 'DV_PORTGROUP')
+            | map(attribute='backingNetworkId')
+            | list
+          }}
+
+    - name: Select an unused DVPortGroup
+      set_fact:
+        selected_dvpg: >-
+          {{
+            all_dvpgs
+            | difference(used_dvportgroups)
+            | first
+          }}
+
+    - name: Fail if no DVPortGroup available
+      fail:
+        msg: "No unused DVPortGroup available."
+      when: selected_dvpg == ""
+
+    - name: Parse IPv4 IP ranges from string
+      set_fact:
+        ipv4_ip_ranges: "{{ [] if ipv4_ip_ranges_string | trim == '' else ipv4_ip_ranges_string.split(',') | map('regex_replace', '^(.*)-(.*)$', '{\"startAddress\": \"\\1\", \"endAddress\": \"\\2\"}') | map('from_json') | list }}"
+
+    - name: Parse IPv6 IP ranges from string
+      set_fact:
+        ipv6_ip_ranges: "{{ [] if ipv6_ip_ranges_string | trim == '' else ipv6_ip_ranges_string.split(',') | map('regex_replace', '^(.*)-(.*)$', '{\"startAddress\": \"\\1\", \"endAddress\": \"\\2\"}') | map('from_json') | list }}"
+      when: enable_dual_subnet_network | bool
+
+    - name: Build IPv4 subnet
+      set_fact:
+        ipv4_subnet: >-
+          {{
+            {
+              "gateway": Gateway_CIDR_IPv4,
+              "prefixLength": ipv4_prefix_length,
+              "dnsSuffix": ipv4_dns_suffix,
+              "dnsServer1": ipv4_dns_server1,
+              "dnsServer2": ipv4_dns_server2,
+              "enabled": true
+            }
+            | combine({"ipRanges": {"values": ipv4_ip_ranges}} 
+                if ipv4_ip_ranges 
+                and ipv4_ip_ranges[0].startAddress|length > 0 
+                and ipv4_ip_ranges[0].endAddress|length > 0 
+                else {})
+          }}
+
+    - name: Build IPv6 subnet
+      set_fact:
+        ipv6_subnet: >-
+          {{
+            {
+              "gateway": Gateway_CIDR_IPv6,
+              "prefixLength": ipv6_prefix_length,
+              "enabled": true
+            }
+            | combine({"ipRanges": {"values": ipv6_ip_ranges}} 
+                if ipv6_ip_ranges 
+                and ipv6_ip_ranges[0].startAddress|length > 0 
+                and ipv6_ip_ranges[0].endAddress|length > 0 
+                else {})
+          }}
+      when: enable_dual_subnet_network | bool
+
+    - name: Construct payload with selected DVPortGroup
+      set_fact:
+        payload:
+          name: "{{ network_name }}"
+          description: "{{ network_description }}"
+          subnets:
+            values: >-
+              {{
+                [ipv4_subnet]
+                + ( [ipv6_subnet] if (enable_dual_subnet_network | bool) and (ipv6_subnet is defined) else [] )
+              }}
+          backingNetworkId: "{{ selected_dvpg }}"
+          backingNetworkType: "DV_PORTGROUP"
+          networkType: "OPAQUE"
+          ownerRef:
+            name: "{{ vcd_organization_vdc_name }}"
+            id: "{{ vcd_organization_vdc_id }}"
+          orgVdcIsNsxTBacked: false
+          orgRef:
+            name: "{{ vcd_organization_name }}"
+            id: "{{ vcd_organization_id }}"
+          connection: null
+          isDefaultNetwork: null
+          shared: "{{ shared_network | bool }}"
+          enableDualSubnetNetwork: "{{ enable_dual_subnet_network | bool }}"
+          guestVlanTaggingAllowed: false
+          retainNicResources: false
+
+    - name: Create Imported VDC Network
+      uri:
+        url: "https://{{ vcd_api_host_name }}/cloudapi/1.0.0/orgVdcNetworks/"
+        method: POST
+        headers:
+          Accept: "application/json;version={{ vcd_api_version }}"
+          Authorization: "Bearer {{ vcloud_access_token }}"
+          Content-Type: "application/json"
+        body: "{{ payload | to_json }}"
+        return_content: yes
+        status_code: 202
+      register: create_network_response
+      ignore_errors: yes
+
+    - block:
+        - debug:
+            var: create_network_response
+          when: create_network_response.status != 202
+
+        - fail:
+            msg: "Network creation failed (status {{ create_network_response.status }}): {{ create_network_response.json }}"
+          when: create_network_response.status != 202
+
+        - uri:
+            url: "{{ create_network_response.location }}"
+            method: GET
+            headers:
+              Accept: "application/*+xml;version={{ vcd_api_version }}"
+              Authorization: "Bearer {{ vcloud_access_token }}"
+            return_content: yes
+            status_code: 200
+          register: task_status
+          until: task_status.content is search("status=\"success\"")
+          retries: 12
+          delay: 10
+          when: create_network_response.location is defined
+
+        - debug:
+            var: task_status.content
+      rescue:
+        - fail:
+            msg: "Unexpected error during network creation."
