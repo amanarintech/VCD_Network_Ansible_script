@@ -108,3 +108,36 @@ network_name: ""                   # Name of the new direct network
 network_description: ""            # Network description
 shared_network: "true"             # Should the network be shared (string: "true"/"false")
 
+
+
+🔁 Imported Network - imported.yml
+This playbook creates an Imported VDC Network in VMware Cloud Director using an available Distributed Virtual Port Group (DV PortGroup) from a registered vCenter (VIM server). It supports both IPv4 and IPv6 subnets.
+
+🔧 Required Variables
+vcd_api_host_name: ""               # vCloud Director hostname
+vcd_api_version: "36.3"            # API version
+vcd_api_token: ""                  # API refresh token
+
+vcd_organization_name: ""          # vCD Organization name
+vcd_organization_vdc_name: ""      # VDC name
+vim_server_id: ""                  # VIM Server (vCenter) ID
+
+network_name: ""                   # New network name
+network_description: ""            # Description
+shared_network: "false"            # "true"/"false" string
+
+# IPv4 settings
+Gateway_CIDR_IPv4: "192.168.150.1"
+ipv4_prefix_length: 24
+ipv4_ip_ranges_string: "192.168.150.10-192.168.150.20"
+ipv4_dns_suffix: ""
+ipv4_dns_server1: ""
+ipv4_dns_server2: ""
+
+# IPv6 settings
+Gateway_CIDR_IPv6: "fd00:192:168:1::1"
+ipv6_prefix_length: 64
+ipv6_ip_ranges_string: "fd00:192:168:1::10-fd00:192:168:1::20"
+
+enable_dual_subnet_network: "true"   # string: "true" / "false"
+
