@@ -61,6 +61,57 @@ ipv4_dns_server2: "1.1.1.1"
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 🔒 Isolated Network – isolated.yml
 Creates a fully isolated network without edge connectivity. Ideal for internal-only VM communication.
 
