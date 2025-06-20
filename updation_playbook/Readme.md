@@ -61,4 +61,41 @@ Make sure you have Ansible installed (ansible-playbook --version).
 Set the required variables in the routed.yml file or use --extra-vars.
 
 Run the playbook:
+ansible-playbook routed.yml
+
+
+
+🛡️ Isolated Network - isolated.yml
+This playbook creates a fully isolated VDC network in VMware Cloud Director (vCD). It is not connected to any edge gateway, making it suitable for internal-only communication between VMs.
+
+🔧 Variables to Configure
+vcd_api_host_name: ""               # vCD API hostname
+vcd_api_version: "36.3"            # API version
+vcd_api_token: ""                  # API token for authentication
+vcd_organization_name: ""          # Org name in vCD
+vcd_organization_id: ""            # Org ID (can be fetched via API)
+vcd_organization_vdc_name: ""      # VDC name
+vcd_organization_vdc_id: ""        # VDC ID (can be fetched via API)
+
+backing_network_id: ""             # NSX-T Segment backing ID (can be blank for new)
+
+network_name: ""                   # Desired network name
+network_description: ""            # Description
+enable_dual_subnet_network: false  # Set to true for IPv6 support
+
+# IPv4 subnet config
+Gateway_CIDR_IPv4: "172.20.30.1"
+ipv4_prefix_length: 24
+ipv4_ip_ranges_string: "172.20.30.10-172.20.30.20"
+
+# IPv6 subnet config
+Gateway_CIDR_IPv6: "fd00:172:20:30::1"
+ipv6_prefix_length: 64
+ipv6_ip_ranges_string: "fd00:172:20:30::10-fd00:172:20:30::20"
+
+# DNS settings
+ipv4_dns_suffix: "example.com"
+ipv4_dns_server1: "8.8.8.8"
+ipv4_dns_server2: "1.1.1.1"
+
 
