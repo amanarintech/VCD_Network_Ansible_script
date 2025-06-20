@@ -144,7 +144,6 @@ enable_dual_subnet_network: "true"   # string: "true" / "false"
 
 
 📘 updation_playbook/README.md
-
 # 🔄 Org VDC Network Update Playbooks – vCloud Director
 
 This folder contains Ansible playbooks specifically designed to **update existing Org VDC networks** in VMware Cloud Director (vCD).
