@@ -54,6 +54,10 @@ ipv4_dns_server1: "8.8.8.8"
 ipv4_dns_server2: "1.1.1.1"
 
 
+
+
+
+
 🛡️ Isolated Network - isolated.yml
 This playbook creates a fully isolated VDC network in VMware Cloud Director (vCD). It is not connected to any edge gateway, making it suitable for internal-only communication between VMs.
 
@@ -85,3 +89,22 @@ ipv6_ip_ranges_string: "fd00:172:20:30::10-fd00:172:20:30::20"
 ipv4_dns_suffix: "example.com"
 ipv4_dns_server1: "8.8.8.8"
 ipv4_dns_server2: "1.1.1.1"
+
+
+
+🌐 Direct Network - direct.yml
+This playbook creates a Direct VDC Network in VMware Cloud Director. It connects the VDC directly to an existing external network (such as a DV Port Group), enabling VM-level access to external networks without NAT or routing via an edge gateway.
+
+🔧 Variables to Configure
+vcd_api_host_name: ""               # vCD API hostname
+vcd_api_version: "36.3"            # API version
+vcd_api_token: ""                  # API token for authentication
+
+vcd_organization_name: ""          # vCD Organization name
+vcd_organization_vdc_name: ""      # VDC name
+
+external_network: ""               # Name of the external network to attach
+network_name: ""                   # Name of the new direct network
+network_description: ""            # Network description
+shared_network: "true"             # Should the network be shared (string: "true"/"false")
+
