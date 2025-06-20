@@ -141,3 +141,50 @@ ipv6_ip_ranges_string: "fd00:192:168:1::10-fd00:192:168:1::20"
 
 enable_dual_subnet_network: "true"   # string: "true" / "false"
 
+
+
+📘 updation_playbook/README.md
+
+# 🔄 Org VDC Network Update Playbooks – vCloud Director
+
+This folder contains Ansible playbooks specifically designed to **update existing Org VDC networks** in VMware Cloud Director (vCD).
+
+---
+
+## 🗂 Files
+
+| File Name         | Purpose                                              |
+|-------------------|------------------------------------------------------|
+| `Dns.yml`         | Updates DNS settings (suffix and nameservers) for an existing Org VDC network |
+| `edgeconnection.yml` | Utility to validate and fetch Edge Gateway connection IDs |
+| `ipv4static-ip.yml` | Update or configure static IPv4 IP ranges on an existing network |
+| `ipv6static-ip.yml` | Update or configure static IPv6 IP ranges          |
+| `Readme.md`       | You're here! Overview of update modules              |
+
+---
+
+## 🧰 Playbook Features
+
+### ✅ 1. `Dns.yml`
+
+- Update **DNS suffix**, **DNS server 1**, and **DNS server 2**.
+- Uses the network name and Org name to find the correct Org VDC network.
+- Only modifies the `subnets.values` section, leaving other attributes untouched.
+
+### 🔧 2. `ipv4static-ip.yml` & `ipv6static-ip.yml`
+
+- Modify or extend static IP pools (IPv4/IPv6).
+- Safely appends to or replaces IP ranges in subnet definitions.
+
+### 🌐 3. `edgeconnection.yml`
+
+- Retrieves and validates the Edge Gateway for routing updates or validations.
+- Useful if you plan to add route changes in future scripts.
+
+---
+
+## 🧪 Example Execution
+
+```bash
+# Update DNS settings for a network
+ansible-playbook Dns.yml -e "vcd_api_host_name='your.vcd.domain' vcd_api_token='your_token' network_name='MyRoutedNet' vcd_organization_name='MyOrg'"
