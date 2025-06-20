@@ -91,3 +91,53 @@ ipv6_ip_ranges_string: "fd00:172:20:30::10-fd00:172:20:30::20"
 ipv4_dns_suffix: "example.com"
 ipv4_dns_server1: "8.8.8.8"
 ipv4_dns_server2: "1.1.1.1"
+
+
+
+🌐 Direct Network – direct.yml
+Creates a Direct VDC Network attached directly to an external network (e.g., DV Port Group) without edge gateway.
+
+🔧 Required Variables
+vcd_api_host_name: ""
+vcd_api_version: "36.3"
+vcd_api_token: ""
+
+vcd_organization_name: ""
+vcd_organization_vdc_name: ""
+
+external_network: ""     # External network name (e.g., DVPG)
+network_name: ""
+network_description: ""
+shared_network: "true"   # "true" or "false" (string)
+
+
+
+🔁 Imported Network – imported.yml
+Creates an Imported VDC Network from an existing DV Port Group or NSX-T Segment. Supports dual-stack.
+
+🔧 Required Variables
+vcd_api_host_name: ""
+vcd_api_version: "36.3"
+vcd_api_token: ""
+
+vcd_organization_name: ""
+vcd_organization_vdc_name: ""
+vim_server_id: ""
+
+network_name: ""
+network_description: ""
+shared_network: "false"
+enable_dual_subnet_network: "true"
+
+# IPv4 Config
+Gateway_CIDR_IPv4: "192.168.150.1"
+ipv4_prefix_length: 24
+ipv4_ip_ranges_string: "192.168.150.10-192.168.150.20"
+ipv4_dns_suffix: ""
+ipv4_dns_server1: ""
+ipv4_dns_server2: ""
+
+# IPv6 Config
+Gateway_CIDR_IPv6: "fd00:192:168:1::1"
+ipv6_prefix_length: 64
+ipv6_ip_ranges_string: "fd00:192:168:1::10-fd00:192:168:1::20"
